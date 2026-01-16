@@ -1,0 +1,62 @@
+# docker-compose.yml
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    networks:
+      - ephish_network
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mysql-db
+      - analyzer
+    environment:
+      - DATABASE_URL=mysql+pymysql://root:password@mysql-db:3306/ephish_db
+      - ANALYZER_URL=http://analyzer:5000
+    networks:
+      - ephish_network
+    restart: on-failure
+    init: true  # Tambahkan ini
+
+  analyzer:
+    build: ./analyzer
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./analyzer/yara_rules:/app/yara_rules
+    networks:
+      - ephish_network
+    init: true  # Tambahkan ini
+
+  mysql-db:
+    image: mysql:8.0
+    command: --default-authentication-plugin=mysql_native_password
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: ephish_db
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - ephish_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+volumes:
+  mysql_data: # Perbaikan: ubah dari mysql_/var/lib/mysql
+
+networks:
+  ephish_network:
+    driver: bridge
