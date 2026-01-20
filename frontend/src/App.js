@@ -16,6 +16,7 @@ const App = () => {
     { role: 'assistant', content: 'Hello! I am your forensic AI assistant. How can I help analyze this phishing case?' }
   ]);
   const [chatInput, setChatInput] = useState('');
+  const [pdfDownloadUrl, setPdfDownloadUrl] = useState(null); // State untuk URL download PDF
 
   const intervalRef = useRef(null);
   const startTimeRef = useRef(null);
@@ -82,12 +83,13 @@ const App = () => {
   }, [isLoading]);
 
   const handleFileUpload = async (type) => {
-    if (!emailFile) return;
+    if (!emailFile) return; // Semua jenis file diupload melalui satu input file
 
     setIsLoading(true);
     setProgress(0);
     setElapsedTime("00:00");
-    setAnalysisResults(null);
+    setAnalysisResults(null); // Reset hasil sebelumnya
+    setPdfDownloadUrl(null); // Reset PDF URL sebelumnya
 
     try {
       const formData = new FormData();
@@ -95,18 +97,34 @@ const App = () => {
 
       let endpoint;
       if (type === 'phishing') {
-        endpoint = 'email/analyze';
+        endpoint = 'email/analyze'; // Sekarang endpoint ini menangani gabungan
       } else if (type === 'malware') {
-        endpoint = 'malware/analyze';
+        endpoint = 'malware/analyze'; // Endpoint standalone jika diperlukan
       }
 
+      // Gunakan axios.post biasa, backend handle timeout
       const response = await axios.post(`http://localhost:8000/api/${endpoint}`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 3 * 60 * 60 * 1000, // 3 jam dalam ms
+        headers: { 'Content-Type': 'multipart/form-data' }
       });
 
       setAnalysisResults(response.data);
 
+      // Cek apakah ada path PDF untuk diunduh
+      if (response.data.report_pdf_path) {
+        // Ambil nama file dari path (misalnya path berisi /tmp/filename.pdf)
+        const fileName = response.data.report_pdf_path.split('/').pop();
+        // Kita asumsikan backend memiliki endpoint untuk mengunduh file ini
+        // Misalnya, backend mengekspor file dari /tmp ke folder statis yang bisa diakses, atau gunakan streaming
+        // Untuk sementara, kita gunakan format URL seperti ini, sesuaikan dengan endpoint download PDF di backend Anda
+        // Contoh: jika backend bisa serve file dari /reports/filename.pdf
+        // setPdfDownloadUrl(`http://localhost:8000/reports/${fileName}`);
+        // ATAU jika backend menyediakan endpoint GET seperti yang ditambahkan di langkah 2:
+        setPdfDownloadUrl(`http://localhost:8000/api/report/${fileName}`);
+      } else {
+        setPdfDownloadUrl(null); // Reset jika tidak ada PDF
+      }
+
+      // Add to forensic logs
       setForensicLogs(prev => [...prev, {
         id: Date.now(),
         timestamp: new Date().toISOString(),
@@ -117,28 +135,11 @@ const App = () => {
 
     } catch (error) {
       console.error('Analysis error:', error);
-      let errorMsg = "An unknown error occurred.";
-      if (error.response) {
-        // Server responded with error status
-        if (error.response.status === 413) {
-          errorMsg = "File too large. Please upload a smaller file.";
-        } else {
-          errorMsg = `Server Error: ${error.response.status} - ${error.response.data.detail || error.response.statusText}`;
-        }
-      } else if (error.request) {
-        // Request was made but no response received (timeout)
-        if (error.code === 'ECONNABORTED') {
-          errorMsg = "Request timed out. The file might be too large or the analysis is taking very long.";
-        } else {
-          errorMsg = "Network Error: Unable to reach the server.";
-        }
-      } else {
-        // Something else happened
-        errorMsg = error.message;
-      }
-      setAnalysisResults({ error: errorMsg });
+      setAnalysisResults({ error: error.message });
+      setPdfDownloadUrl(null); // Pastikan PDF URL direset jika error
     } finally {
       setIsLoading(false);
+      // Reset timer dan progress setelah selesai
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
@@ -378,6 +379,19 @@ const App = () => {
                         <p className="text-lg font-semibold text-green-400">{analysisResults.csv_analysis.clean_count}</p>
                       </div>
                     </div>
+                    {/* Cek dan tampilkan tombol download PDF untuk batch */}
+                    {pdfDownloadUrl && (
+                      <div className="mb-4">
+                        <a
+                          href={pdfDownloadUrl}
+                          download
+                          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg inline-flex items-center"
+                        >
+                          <Download className="w-4 h-4 mr-2" />
+                          Download PDF Report
+                        </a>
+                      </div>
+                    )}
                     <div className="overflow-x-auto">
                       <table className="min-w-full divide-y divide-gray-600">
                         <thead>
@@ -417,25 +431,68 @@ const App = () => {
                       <p className="text-sm text-gray-500 mt-2">... and {analysisResults.csv_analysis.rows.length - 10} more rows</p>
                     )}
                   </div>
-                ) : ( // Jika hasil single email
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <p><strong>Verdict:</strong> <span className={
-                        analysisResults.phishing ? 'text-red-400' : 'text-green-400'
-                      }>
-                        {analysisResults.phishing ? 'PHISHING DETECTED' : 'CLEAN'}
-                      </span></p>
-                      <p><strong>Confidence:</strong> {(analysisResults.confidence * 100).toFixed(2)}%</p>
-                      <p><strong>Severity:</strong> <span className={
-                        analysisResults.severity === 'CRITICAL' ? 'text-red-400' :
-                        analysisResults.severity === 'HIGH' ? 'text-orange-400' : 'text-green-400'
-                      }>{analysisResults.severity}</span></p>
-                      <p><strong>Phishing Score:</strong> {analysisResults.confidence?.toFixed(4)}</p>
+                ) : ( // Jika hasil single email (gabungan)
+                  <div>
+                    {/* Tombol Download PDF jika tersedia */}
+                    {pdfDownloadUrl && (
+                      <div className="mb-4">
+                        <a
+                          href={pdfDownloadUrl}
+                          download
+                          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg inline-flex items-center"
+                        >
+                          <Download className="w-4 h-4 mr-2" />
+                          Download PDF Report
+                        </a>
+                      </div>
+                    )}
+                    {/* Render hasil phishing */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                      <div className="space-y-2">
+                        <p><strong>Phishing Verdict:</strong> <span className={
+                          analysisResults.phishing ? 'text-red-400' : 'text-green-400'
+                        }>
+                          {analysisResults.phishing ? 'PHISHING DETECTED' : 'CLEAN'}
+                        </span></p>
+                        <p><strong>Confidence (Phishing):</strong> {(analysisResults.confidence * 100).toFixed(2)}%</p>
+                        <p><strong>Severity:</strong> <span className={
+                          analysisResults.severity === 'CRITICAL' ? 'text-red-400' :
+                          analysisResults.severity === 'HIGH' ? 'text-orange-400' : 'text-green-400'
+                        }>{analysisResults.severity}</span></p>
+                        <p><strong>Phishing Score:</strong> {analysisResults.confidence?.toFixed(4)}</p>
+                      </div>
+                      <div className="space-y-2">
+                        <p><strong>Suspicious URLs:</strong> {analysisResults.urls?.length || 0}</p>
+                        <p><strong>Social Engineering:</strong> {analysisResults.social_engineering?.join(', ') || 'None detected'}</p>
+                        <p><strong>NLP Label:</strong> {analysisResults.nlp_label}</p>
+                      </div>
                     </div>
-                    <div className="space-y-2">
-                      <p><strong>Suspicious URLs:</strong> {analysisResults.urls?.length || 0}</p>
-                      <p><strong>Social Engineering:</strong> {analysisResults.social_engineering?.join(', ') || 'None detected'}</p>
-                      <p><strong>NLP Label:</strong> {analysisResults.nlp_label}</p>
+                    {/* Render hasil malware jika ada */}
+                    {analysisResults.malware_analysis && (
+                      <div className="mt-4 pt-4 border-t border-gray-600">
+                        <h4 className="font-medium mb-2">Malware Analysis (Email Content)</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <p><strong>Malware Status:</strong> <span className={
+                              analysisResults.malware_analysis.is_malware ? 'text-red-400' : 'text-green-400'
+                            }>
+                              {analysisResults.malware_analysis.is_malware ? 'MALWARE DETECTED' : 'CLEAN'}
+                            </span></p>
+                            <p><strong>Malware Family:</strong> {analysisResults.malware_analysis.malware_family || 'Unknown'}</p>
+                            <p><strong>Confidence (Malware):</strong> {(analysisResults.malware_analysis.malware_confidence * 100).toFixed(2)}%</p>
+                          </div>
+                          <div className="space-y-2">
+                            <p><strong>Entropy:</strong> {analysisResults.malware_analysis.entropy?.toFixed(4)}</p>
+                            <p><strong>YARA Matches:</strong> {analysisResults.malware_analysis.yara_matches?.length || 0}</p>
+                            <p><strong>Analysis Method:</strong> {analysisResults.malware_analysis.analysis_method}</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {/* Penjelasan */}
+                    <div className="mt-4 p-4 bg-gray-700 rounded">
+                      <h4 className="font-medium mb-1">Explanation</h4>
+                      <p className="text-sm text-gray-300">{analysisResults.explanation}</p>
                     </div>
                   </div>
                 )}
@@ -507,22 +564,42 @@ const App = () => {
                 {analysisResults.error ? (
                   <div className="text-red-400">Error: {analysisResults.error}</div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <p><strong>Malware Status:</strong> <span className={
-                        analysisResults.is_malware ? 'text-red-400' : 'text-green-400'
-                      }>
-                        {analysisResults.is_malware ? 'MALWARE DETECTED' : 'CLEAN'}
-                      </span></p>
-                      <p><strong>Malware Family:</strong> {analysisResults.malware_family || 'Unknown'}</p>
-                      <p><strong>Confidence:</strong> {(analysisResults.malware_confidence * 100).toFixed(2)}%</p>
-                      <p><strong>Analysis Method:</strong> {analysisResults.analysis_method}</p>
+                  <div>
+                    {/* Tombol Download PDF jika tersedia */}
+                    {pdfDownloadUrl && (
+                      <div className="mb-4">
+                        <a
+                          href={pdfDownloadUrl}
+                          download
+                          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg inline-flex items-center"
+                        >
+                          <Download className="w-4 h-4 mr-2" />
+                          Download PDF Report
+                        </a>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <p><strong>Malware Status:</strong> <span className={
+                          analysisResults.is_malware ? 'text-red-400' : 'text-green-400'
+                        }>
+                          {analysisResults.is_malware ? 'MALWARE DETECTED' : 'CLEAN'}
+                        </span></p>
+                        <p><strong>Malware Family:</strong> {analysisResults.malware_family || 'Unknown'}</p>
+                        <p><strong>Confidence:</strong> {(analysisResults.malware_confidence * 100).toFixed(2)}%</p>
+                        <p><strong>Analysis Method:</strong> {analysisResults.analysis_method}</p>
+                      </div>
+                      <div className="space-y-2">
+                        <p><strong>File Hash:</strong> {analysisResults.file_hash}</p>
+                        <p><strong>Entropy:</strong> {analysisResults.entropy?.toFixed(4)}</p>
+                        <p><strong>YARA Matches:</strong> {analysisResults.yara_matches?.length || 0}</p>
+                        <p><strong>Suspicious Patterns:</strong> {analysisResults.suspicious_patterns_found?.length || 0}</p>
+                      </div>
                     </div>
-                    <div className="space-y-2">
-                      <p><strong>File Hash:</strong> {analysisResults.file_hash}</p>
-                      <p><strong>Entropy:</strong> {analysisResults.entropy?.toFixed(4)}</p>
-                      <p><strong>YARA Matches:</strong> {analysisResults.yara_matches?.length || 0}</p>
-                      <p><strong>Suspicious Patterns:</strong> {analysisResults.suspicious_patterns_found?.length || 0}</p>
+                    {/* Penjelasan */}
+                    <div className="mt-4 p-4 bg-gray-700 rounded">
+                      <h4 className="font-medium mb-1">Explanation</h4>
+                      <p className="text-sm text-gray-300">{analysisResults.explanation}</p>
                     </div>
                   </div>
                 )}
