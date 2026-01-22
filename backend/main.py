@@ -1,7 +1,7 @@
 # backend/main.py
 from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles # Import StaticFiles
 import uvicorn
 import os
 from typing import Optional
@@ -98,6 +98,9 @@ class CsvAnalysis(Base):
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 app = FastAPI(title="ePhish Backend API", version="1.0.0")
+
+# Mount the shared reports directory as static files
+app.mount("/reports", StaticFiles(directory="/app/reports"), name="reports")
 
 # CORS middleware
 app.add_middleware(
@@ -273,15 +276,15 @@ async def analyze_malware(file: UploadFile = File(...)):
         logger.error(f"Error in backend analyze_malware: {e}")
         raise HTTPException(status_code=500, detail=f"Backend error: {str(e)}")
 
-# Endpoint baru untuk mengunduh laporan PDF
-@app.get("/api/report/{report_filename}")
-async def get_report(report_filename: str):
-    """Download the generated PDF report."""
-    report_path = os.path.join("/tmp", report_filename) # Asumsi disimpan di /tmp analyzer
-    if os.path.exists(report_path):
-        return FileResponse(path=report_path, filename=report_filename, media_type='application/pdf')
-    else:
-        raise HTTPException(status_code=404, detail="Report file not found")
+# HAPUS endpoint lama ini karena kita gunakan StaticFiles
+# @app.get("/api/report/{report_filename}")
+# async def get_report(report_filename: str):
+#     """Download the generated PDF report."""
+#     report_path = os.path.join("/tmp", report_filename) # Asumsi disimpan di /tmp analyzer
+#     if os.path.exists(report_path):
+#         return FileResponse(path=report_path, filename=report_filename, media_type='application/pdf')
+#     else:
+#         raise HTTPException(status_code=404, detail="Report file not found")
 
 @app.post("/api/ai/explain")
 async def explain_analysis(request_data: AIExplainRequest):

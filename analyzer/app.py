@@ -1,5 +1,5 @@
 # analyzer/app.py
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 import tempfile
@@ -27,9 +27,13 @@ def generate_pdf_report(combined_results, filename_prefix="ePhish_Forensic_Repor
     """
     Generate a PDF report from combined phishing/malware analysis results.
     Includes Top-N URLs section.
+    Saves to the shared /app/reports directory.
     """
-    # Create a temporary file path
-    temp_pdf_path = os.path.join(tempfile.gettempdir(), f"{filename_prefix}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.pdf")
+    # Create a filename with timestamp
+    timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+    filename = f"{filename_prefix}_{timestamp}.pdf"
+    # Create a file path in the shared reports directory
+    temp_pdf_path = os.path.join("/app/reports", filename)
 
     doc = SimpleDocTemplate(temp_pdf_path, pagesize=A4)
     styles = getSampleStyleSheet()
@@ -165,7 +169,8 @@ def generate_pdf_report(combined_results, filename_prefix="ePhish_Forensic_Repor
             elements.append(Spacer(1, 10))
 
     doc.build(elements)
-    return temp_pdf_path
+    # Return just the filename, not the full path
+    return filename
 
 
 def analyze_combined(email_content, email_id=None):
@@ -205,8 +210,9 @@ def analyze_phishing():
 
                 # Proses batch untuk tambahkan malware analysis ke setiap row (opsional, bisa di-skip untuk performansi)
                 # Kita hanya buat laporan PDF untuk batch
-                pdf_path = generate_pdf_report(batch_result, f"ePhish_Batch_Report_{filename.replace('.csv', '')}")
-                batch_result['report_pdf_path'] = pdf_path # Tambahkan path PDF ke hasil
+                pdf_filename = generate_pdf_report(batch_result, f"ePhish_Batch_Report_{filename.replace('.csv', '')}")
+                # Store the relative path from the shared directory perspective for the backend
+                batch_result['report_pdf_path'] = pdf_filename # Store only the filename
 
                 return jsonify(batch_result)
 
@@ -229,8 +235,9 @@ def analyze_phishing():
                     result = analyze_combined(email_text, email_id=filename)
                     
                     # Generate PDF for single email
-                    pdf_path = generate_pdf_report(result, f"ePhish_Analysis_Report_{filename.replace('.eml', '').replace('.msg', '')}")
-                    result['report_pdf_path'] = pdf_path # Tambahkan path PDF ke hasil
+                    pdf_filename = generate_pdf_report(result, f"ePhish_Analysis_Report_{filename.replace('.eml', '').replace('.msg', '')}")
+                    # Store the relative path from the shared directory perspective for the backend
+                    result['report_pdf_path'] = pdf_filename # Store only the filename
                     
                     logger.info(f"Combined analysis completed: phishing={result.get('phishing')}, malware={result.get('malware_analysis', {}).get('is_malware')}")
                     return jsonify(result)
@@ -246,8 +253,9 @@ def analyze_phishing():
             result = analyze_combined(email_content, email_id)
             
             # Generate PDF for JSON input
-            pdf_path = generate_pdf_report(result, f"ePhish_JSON_Analysis_Report")
-            result['report_pdf_path'] = pdf_path # Tambahkan path PDF ke hasil
+            pdf_filename = generate_pdf_report(result, f"ePhish_JSON_Analysis_Report")
+            # Store the relative path from the shared directory perspective for the backend
+            result['report_pdf_path'] = pdf_filename # Store only the filename
             
             logger.info(f"Combined JSON analysis completed: phishing={result.get('phishing')}, malware={result.get('malware_analysis', {}).get('is_malware')}")
             return jsonify(result)

@@ -21,10 +21,11 @@ services:
     environment:
       - DATABASE_URL=mysql+pymysql://root:password@mysql-db:3306/ephish_db
       - ANALYZER_URL=http://analyzer:5000
+    volumes:
+      # Tambahkan volume untuk reports
+      - ./reports:/app/reports
     networks:
       - ephish_network
-    restart: on-failure
-    init: true  # Tambahkan ini
 
   analyzer:
     build: ./analyzer
@@ -32,9 +33,10 @@ services:
       - "5000:5000"
     volumes:
       - ./analyzer/yara_rules:/app/yara_rules
+      # Tambahkan volume untuk reports
+      - ./reports:/app/reports
     networks:
       - ephish_network
-    init: true  # Tambahkan ini
 
   mysql-db:
     image: mysql:8.0
@@ -55,7 +57,7 @@ services:
       retries: 10
 
 volumes:
-  mysql_data: # Perbaikan: ubah dari mysql_/var/lib/mysql
+  mysql_data:
 
 networks:
   ephish_network:
