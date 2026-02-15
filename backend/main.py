@@ -138,18 +138,21 @@ async def analyze_email(file: UploadFile = File(...)):
         content = await file.read()
 
         analyzer_url = os.getenv("ANALYZER_URL", "http://analyzer:5000")
-        logger.info(f"Sending request to analyzer at: {analyzer_url}")
 
-        # Gunakan Session untuk konfigurasi timeout
-        with requests.Session() as session:
-            # Atur timeout besar (12 jam) untuk batch besar, atau lebih kecil untuk single
-            timeout_seconds = 300 # 5 menit untuk single
-            if filename.endswith('.csv'):
-                 # Bisa disesuaikan, misalnya 12 jam (43200 detik) untuk batch besar
-                timeout_seconds = 43200 
-
+        if filename.endswith('.csv'):
+            # Kirim ke analyzer untuk batch analysis
             files = {"file": (file.filename, content, file.content_type)}
-            response = session.post(f"{analyzer_url}/analyze/phishing", files=files, timeout=timeout_seconds)
+            response = requests.post(f"{analyzer_url}/analyze/phishing", files=files, timeout=43200) # 12 jam
+
+        elif filename.endswith(('.eml', '.msg')):
+            # Kirim ke analyzer untuk single email analysis
+            files = {"file": (file.filename, content, file.content_type)}
+            response = requests.post(f"{analyzer_url}/analyze/phishing", files=files, timeout=300) # 5 menit
+
+        else:
+            # Untuk file teks biasa atau format lain, baca sebagai teks
+            email_content = content.decode('utf-8')
+            response = requests.post(f"{analyzer_url}/analyze/phishing", json={"email_content": email_content}, timeout=300)
 
         logger.info(f"Analyzer response status: {response.status_code}")
         if response.status_code != 200:
@@ -276,7 +279,8 @@ async def analyze_malware(file: UploadFile = File(...)):
         logger.error(f"Error in backend analyze_malware: {e}")
         raise HTTPException(status_code=500, detail=f"Backend error: {str(e)}")
 
-# HAPUS endpoint lama ini karena kita gunakan StaticFiles
+# Endpoint baru untuk mengunduh laporan PDF
+# (Endpoint ini tidak perlu lagi karena kita gunakan StaticFiles)
 # @app.get("/api/report/{report_filename}")
 # async def get_report(report_filename: str):
 #     """Download the generated PDF report."""

@@ -1,8 +1,15 @@
 // frontend/src/App.js
 import React, { useState, useEffect, useRef } from 'react';
-import { Shield, Mail, AlertTriangle, BarChart3, Activity, Zap, Upload, Search, Download, Clock, RotateCcw } from 'lucide-react';
+import {
+  Shield, Mail, AlertTriangle, BarChart3,
+  Activity, Zap, Upload, Search,
+  Clock, Download, RotateCcw
+} from 'lucide-react';
 import axios from 'axios';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import {
+  LineChart, Line, XAxis, YAxis,
+  CartesianGrid, Tooltip, ResponsiveContainer
+} from 'recharts';
 
 const App = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -119,7 +126,7 @@ const App = () => {
         // Contoh: jika backend bisa serve file dari /reports/filename.pdf
         // setPdfDownloadUrl(`http://localhost:8000/reports/${fileName}`);
         // ATAU jika backend menyediakan endpoint GET seperti yang ditambahkan di langkah 2:
-        setPdfDownloadUrl(`http://localhost:8000/api/report/${fileName}`);
+        setPdfDownloadUrl(`http://localhost:8000/reports/${fileName}`);
       } else {
         setPdfDownloadUrl(null); // Reset jika tidak ada PDF
       }

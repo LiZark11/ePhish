@@ -1,5 +1,5 @@
 # analyzer/app.py
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import os
 import tempfile
@@ -27,7 +27,6 @@ def generate_pdf_report(combined_results, filename_prefix="ePhish_Forensic_Repor
     """
     Generate a PDF report from combined phishing/malware analysis results.
     Includes Top-N URLs section.
-    Saves to the shared /app/reports directory.
     """
     # Create a filename with timestamp
     timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
