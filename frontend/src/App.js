@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Shield, Mail, AlertTriangle, BarChart3,
   Activity, Zap, Upload, Search,
-  Clock, Download, RotateCcw
+  Clock, Download, MessageCircle, Send
 } from 'lucide-react';
 import axios from 'axios';
 import {
@@ -16,20 +16,19 @@ const App = () => {
   const [emailFile, setEmailFile] = useState(null);
   const [analysisResults, setAnalysisResults] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [progress, setProgress] = useState(0); // 0-100
-  const [elapsedTime, setElapsedTime] = useState("00:00"); // MM:SS
+  const [progress, setProgress] = useState(0);
+  const [elapsedTime, setElapsedTime] = useState("00:00");
   const [forensicLogs, setForensicLogs] = useState([]);
   const [chatMessages, setChatMessages] = useState([
     { role: 'assistant', content: 'Hello! I am your forensic AI assistant. How can I help analyze this phishing case?' }
   ]);
   const [chatInput, setChatInput] = useState('');
-  const [pdfDownloadUrl, setPdfDownloadUrl] = useState(null); // State untuk URL download PDF
+  const [pdfDownloadUrl, setPdfDownloadUrl] = useState(null);
 
   const intervalRef = useRef(null);
   const startTimeRef = useRef(null);
 
-  // Mock dashboard data
-  const [dashboardData, setDashboardData] = useState({
+  const [dashboardData] = useState({
     totalAnalyses: 127,
     phishingDetected: 23,
     malwareFound: 8,
@@ -56,47 +55,40 @@ const App = () => {
       setElapsedTime("00:00");
 
       intervalRef.current = setInterval(() => {
-        setProgress(prev => {
-          const newProgress = Math.min(prev + 5, 95); // Naik 5% per detik, max 95%
-          return newProgress;
-        });
-
-        const now = new Date();
-        const elapsed = Math.floor((now - startTimeRef.current) / 1000);
-        const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
-        const seconds = (elapsed % 60).toString().padStart(2, '0');
-        setElapsedTime(`${minutes}:${seconds}`);
+        setProgress(prev => Math.min(prev + 5, 95));
+        const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
+        const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
+        const ss = String(elapsed % 60).padStart(2, '0');
+        setElapsedTime(`${mm}:${ss}`);
       }, 1000);
     } else {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
-        // Set progress to 100% when done
         setProgress(100);
-        // Stop timer
-        const now = new Date();
-        const elapsed = Math.floor((now - startTimeRef.current) / 1000);
-        const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
-        const seconds = (elapsed % 60).toString().padStart(2, '0');
-        setElapsedTime(`${minutes}:${seconds}`);
+        
+        if (startTimeRef.current) {
+          const finalElapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
+          const mm_final = String(Math.floor(finalElapsed / 60)).padStart(2, '0');
+          const ss_final = String(finalElapsed % 60).padStart(2, '0');
+          setElapsedTime(`${mm_final}:${ss_final}`);
+        }
       }
     }
 
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
+      if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, [isLoading]);
 
   const handleFileUpload = async (type) => {
-    if (!emailFile) return; // Semua jenis file diupload melalui satu input file
+    if (!emailFile) return;
 
     setIsLoading(true);
     setProgress(0);
     setElapsedTime("00:00");
-    setAnalysisResults(null); // Reset hasil sebelumnya
-    setPdfDownloadUrl(null); // Reset PDF URL sebelumnya
+    setAnalysisResults(null);
+    setPdfDownloadUrl(null);
 
     try {
       const formData = new FormData();
@@ -104,34 +96,25 @@ const App = () => {
 
       let endpoint;
       if (type === 'phishing') {
-        endpoint = 'email/analyze'; // Sekarang endpoint ini menangani gabungan
+        endpoint = 'email/analyze';
       } else if (type === 'malware') {
-        endpoint = 'malware/analyze'; // Endpoint standalone jika diperlukan
+        endpoint = 'malware/analyze';
       }
 
-      // Gunakan axios.post biasa, backend handle timeout
       const response = await axios.post(`http://localhost:8000/api/${endpoint}`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 43200000 // 12 Jam
       });
 
       setAnalysisResults(response.data);
 
-      // Cek apakah ada path PDF untuk diunduh
       if (response.data.report_pdf_path) {
-        // Ambil nama file dari path (misalnya path berisi /tmp/filename.pdf)
-        const fileName = response.data.report_pdf_path.split('/').pop();
-        // Kita asumsikan backend memiliki endpoint untuk mengunduh file ini
-        // Misalnya, backend mengekspor file dari /tmp ke folder statis yang bisa diakses, atau gunakan streaming
-        // Untuk sementara, kita gunakan format URL seperti ini, sesuaikan dengan endpoint download PDF di backend Anda
-        // Contoh: jika backend bisa serve file dari /reports/filename.pdf
-        // setPdfDownloadUrl(`http://localhost:8000/reports/${fileName}`);
-        // ATAU jika backend menyediakan endpoint GET seperti yang ditambahkan di langkah 2:
-        setPdfDownloadUrl(`http://localhost:8000/reports/${fileName}`);
+        const pdfUrl = `http://localhost:8000/reports/${response.data.report_pdf_path}`;
+        setPdfDownloadUrl(pdfUrl);
       } else {
-        setPdfDownloadUrl(null); // Reset jika tidak ada PDF
+        setPdfDownloadUrl(null);
       }
 
-      // Add to forensic logs
       setForensicLogs(prev => [...prev, {
         id: Date.now(),
         timestamp: new Date().toISOString(),
@@ -140,13 +123,24 @@ const App = () => {
         severity: response.data.severity || 'info'
       }]);
 
-    } catch (error) {
-      console.error('Analysis error:', error);
-      setAnalysisResults({ error: error.message });
-      setPdfDownloadUrl(null); // Pastikan PDF URL direset jika error
+    } catch (err) {
+      console.error('Analysis error:', err);
+      let uiErrorMessage = "Terjadi kesalahan sistem yang tidak diketahui.";
+
+      if (err.code === 'ECONNABORTED') {
+        uiErrorMessage = "⏱️ TIMEOUT: Sistem macet atau dataset terlalu besar untuk diproses dalam batas waktu.";
+      } else if (err.message === 'Network Error' || err.code === 'ERR_NETWORK') {
+        uiErrorMessage = "💥 CRASH / MATI: Koneksi ke server terputus di tengah analisis. Kemungkinan Analyzer kehabisan RAM (Out of Memory) atau terjadi error fatal. Buka terminal Docker untuk melihat traceback errornya.";
+      } else if (err.response) {
+        const status = err.response.status;
+        const detail = err.response.data?.detail || err.response.data || "Tidak ada detail error.";
+        uiErrorMessage = `⚠️ ERROR DARI SERVER (Status ${status}):\n${detail}`;
+      }
+      
+      setAnalysisResults({ error: uiErrorMessage });
+      setPdfDownloadUrl(null);
     } finally {
       setIsLoading(false);
-      // Reset timer dan progress setelah selesai
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
@@ -157,10 +151,12 @@ const App = () => {
   };
 
   const handleChatSubmit = async () => {
-    if (!chatInput.trim()) return;
+    if (!chatInput.trim() || !analysisResults) return;
 
-    const userMessage = { role: 'user', content: chatInput };
-    setChatMessages(prev => [...prev, userMessage]);
+    setChatMessages(prev => [
+      ...prev,
+      { role: 'user', content: chatInput }
+    ]);
 
     try {
       const response = await axios.post('http://localhost:8000/api/ai/explain', {
@@ -168,19 +164,70 @@ const App = () => {
         analysis_data: analysisResults
       });
 
-      const aiMessage = { role: 'assistant', content: response.data.explanation };
-      setChatMessages(prev => [...prev, aiMessage]);
-    } catch (error) {
-      const errorMessage = { role: 'assistant', content: 'Sorry, I encountered an error processing your request.' };
-      setChatMessages(prev => [...prev, errorMessage]);
+      setChatMessages(prev => [
+        ...prev,
+        { role: 'assistant', content: response.data.explanation }
+      ]);
+    } catch (err) {
+      setChatMessages(prev => [
+        ...prev,
+        { role: 'assistant', content: 'Sorry, I encountered an error processing your request.' }
+      ]);
     }
 
     setChatInput('');
   };
 
+  const renderBatchDetails = (rows) => {
+    if (!rows || rows.length === 0) return <p>No rows to display.</p>;
+
+    const displayedRows = rows.slice(0, 50);
+    const hasMore = rows.length > 50;
+
+    return (
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-gray-600">
+          <thead>
+            <tr>
+              <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Email ID</th>
+              <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Phishing</th>
+              <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Confidence</th>
+              <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Severity</th>
+              <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Social Eng.</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-600">
+            {displayedRows.map((row, index) => (
+              <tr key={index}>
+                <td className="px-4 py-2 text-sm text-gray-300">{row.email_id || `Row ${index + 1}`}</td>
+                <td className="px-4 py-2 text-sm">
+                  <span className={`px-2 py-1 rounded text-xs ${row.phishing ? 'bg-red-900 text-red-200' : 'bg-green-900 text-green-200'}`}>
+                    {row.phishing ? 'YES' : 'NO'}
+                  </span>
+                </td>
+                <td className="px-4 py-2 text-sm text-gray-300">{(row.confidence || 0).toFixed(4)}</td>
+                <td className="px-4 py-2 text-sm">
+                  <span className={`px-2 py-1 rounded text-xs ${
+                    row.severity === 'CRITICAL' ? 'bg-red-900 text-red-200' :
+                    row.severity === 'HIGH' ? 'bg-orange-900 text-orange-200' : 'bg-green-900 text-green-200'
+                  }`}>
+                    {row.severity || 'N/A'}
+                  </span>
+                </td>
+                <td className="px-4 py-2 text-sm text-gray-300">{row.social_engineering || '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {hasMore && (
+          <p className="text-sm text-gray-500 mt-2">... and {rows.length - 50} more rows</p>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-gray-900 text-white">
-      {/* Header */}
       <header className="bg-gray-800 border-b border-gray-700 px-6 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
@@ -195,7 +242,6 @@ const App = () => {
         </div>
       </header>
 
-      {/* Navigation */}
       <nav className="bg-gray-800 border-b border-gray-700 px-6 py-3">
         <div className="flex space-x-6">
           {[
@@ -207,9 +253,7 @@ const App = () => {
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${
-                activeTab === tab.id 
-                  ? 'bg-red-600 text-white' 
-                  : 'text-gray-300 hover:text-white hover:bg-gray-700'
+                activeTab === tab.id ? 'bg-red-600 text-white' : 'text-gray-300 hover:text-white hover:bg-gray-700'
               }`}
             >
               <tab.icon className="w-4 h-4" />
@@ -219,11 +263,9 @@ const App = () => {
         </div>
       </nav>
 
-      {/* Main Content */}
       <main className="p-6">
         {activeTab === 'dashboard' && (
           <div className="space-y-6">
-            {/* Stats Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
               <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
                 <div className="flex items-center justify-between">
@@ -234,7 +276,6 @@ const App = () => {
                   <BarChart3 className="w-8 h-8 text-blue-400" />
                 </div>
               </div>
-              
               <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
                 <div className="flex items-center justify-between">
                   <div>
@@ -244,7 +285,6 @@ const App = () => {
                   <Mail className="w-8 h-8 text-red-400" />
                 </div>
               </div>
-              
               <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
                 <div className="flex items-center justify-between">
                   <div>
@@ -254,7 +294,6 @@ const App = () => {
                   <AlertTriangle className="w-8 h-8 text-orange-400" />
                 </div>
               </div>
-              
               <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
                 <div className="flex items-center justify-between">
                   <div>
@@ -266,7 +305,6 @@ const App = () => {
               </div>
             </div>
 
-            {/* Charts and Recent Cases */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
                 <h3 className="text-lg font-semibold mb-4">Threat Trends</h3>
@@ -281,7 +319,6 @@ const App = () => {
                   </LineChart>
                 </ResponsiveContainer>
               </div>
-              
               <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
                 <h3 className="text-lg font-semibold mb-4">Recent Cases</h3>
                 <div className="space-y-3">
@@ -313,47 +350,25 @@ const App = () => {
                 <Mail className="w-5 h-5 mr-2 text-red-400" />
                 Email Phishing Analysis
               </h2>
-              
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium mb-2">Upload Email File (.eml, .csv, .msg)</label>
                   <div className="border-2 border-dashed border-gray-600 rounded-lg p-6 text-center">
                     <Upload className="w-12 h-12 text-gray-400 mx-auto mb-2" />
-                    <input
-                      type="file"
-                      accept=".eml,.csv,.msg"
-                      onChange={(e) => setEmailFile(e.target.files[0])}
-                      className="hidden"
-                      id="email-upload"
-                    />
+                    <input type="file" accept=".eml,.csv,.msg" onChange={(e) => setEmailFile(e.target.files[0])} className="hidden" id="email-upload" />
                     <label htmlFor="email-upload" className="cursor-pointer">
-                      <span className="text-blue-400 hover:text-blue-300">
-                        Click to upload or drag and drop
-                      </span>
+                      <span className="text-blue-400 hover:text-blue-300">Click to upload or drag and drop</span>
                     </label>
-                    {emailFile && (
-                      <p className="text-sm text-gray-400 mt-2">{emailFile.name}</p>
-                    )}
+                    {emailFile && (<p className="text-sm text-gray-400 mt-2">{emailFile.name}</p>)}
                   </div>
                 </div>
-                
-                <button
-                  onClick={() => handleFileUpload('phishing')}
-                  disabled={!emailFile || isLoading}
-                  className="bg-red-600 hover:bg-red-700 disabled:bg-gray-600 px-6 py-2 rounded-lg flex items-center"
-                >
-                  <Search className="w-4 h-4 mr-2" />
-                  Analyze Email
+                <button onClick={() => handleFileUpload('phishing')} disabled={isLoading || !emailFile} className="bg-red-600 hover:bg-red-700 disabled:bg-gray-600 px-6 py-2 rounded-lg flex items-center">
+                  <Search className="w-4 h-4 mr-2" /> Analyze Email
                 </button>
-
-                {/* Progress Bar and Timer */}
                 {isLoading && (
                   <div className="space-y-2">
                     <div className="w-full bg-gray-700 rounded-full h-2.5">
-                      <div 
-                        className="bg-red-600 h-2.5 rounded-full transition-all duration-300 ease-out" 
-                        style={{ width: `${progress}%` }}
-                      ></div>
+                      <div className="bg-red-600 h-2.5 rounded-full transition-all duration-300 ease-out" style={{ width: `${progress}%` }}></div>
                     </div>
                     <div className="flex justify-between text-sm text-gray-400">
                       <span>Progress: {progress}%</span>
@@ -368,135 +383,52 @@ const App = () => {
               <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
                 <h3 className="text-lg font-semibold mb-4">Analysis Results</h3>
                 {analysisResults.error ? (
-                  <div className="text-red-400">Error: {analysisResults.error}</div>
-                ) : analysisResults.csv_analysis ? ( // Jika hasil batch CSV
-                  <div>
-                    <h4 className="font-medium mb-2">CSV Analysis Summary</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                      <div>
-                        <p className="text-sm text-gray-400">Total Rows</p>
-                        <p className="text-lg font-semibold">{analysisResults.csv_analysis.total_rows}</p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-400">Phishing Detected</p>
-                        <p className="text-lg font-semibold text-red-400">{analysisResults.csv_analysis.phishing_count}</p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-400">Clean Emails</p>
-                        <p className="text-lg font-semibold text-green-400">{analysisResults.csv_analysis.clean_count}</p>
-                      </div>
+                  <div className="bg-red-900/50 border border-red-500 text-red-200 p-6 rounded-lg shadow-lg">
+                    <div className="flex items-center mb-3">
+                      <svg className="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                      <h3 className="text-xl font-bold text-red-400">Analisis Gagal / Sistem Error</h3>
                     </div>
-                    {/* Cek dan tampilkan tombol download PDF untuk batch */}
-                    {pdfDownloadUrl && (
-                      <div className="mb-4">
-                        <a
-                          href={pdfDownloadUrl}
-                          download
-                          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg inline-flex items-center"
-                        >
-                          <Download className="w-4 h-4 mr-2" />
-                          Download PDF Report
-                        </a>
-                      </div>
-                    )}
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-gray-600">
-                        <thead>
-                          <tr>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Email ID</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Phishing</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Confidence</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Severity</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-600">
-                          {analysisResults.csv_analysis.rows?.slice(0, 10).map((row, index) => ( // Tampilkan 10 baris pertama
-                            <tr key={index}>
-                              <td className="px-4 py-2 text-sm text-gray-300">{row.email_id}</td>
-                              <td className="px-4 py-2 text-sm">
-                                <span className={`px-2 py-1 rounded text-xs ${
-                                  row.phishing ? 'bg-red-900 text-red-200' : 'bg-green-900 text-green-200'
-                                }`}>
-                                  {row.phishing ? 'YES' : 'NO'}
-                                </span>
-                              </td>
-                              <td className="px-4 py-2 text-sm text-gray-300">{row.confidence?.toFixed(4)}</td>
-                              <td className="px-4 py-2 text-sm">
-                                <span className={`px-2 py-1 rounded text-xs ${
-                                  row.severity === 'CRITICAL' ? 'bg-red-900 text-red-200' :
-                                  row.severity === 'HIGH' ? 'bg-orange-900 text-orange-200' : 'bg-green-900 text-green-200'
-                                }`}>
-                                  {row.severity}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    {analysisResults.csv_analysis.rows?.length > 10 && (
-                      <p className="text-sm text-gray-500 mt-2">... and {analysisResults.csv_analysis.rows.length - 10} more rows</p>
-                    )}
+                    <p className="text-sm whitespace-pre-wrap font-mono bg-black/30 p-3 rounded border border-red-800">{analysisResults.error}</p>
+                    <p className="text-xs text-red-300 mt-3">
+                      <strong>Tips:</strong> Jika error "Network Error", segera buka terminal Kali Linux Anda dan lihat log <code>docker compose</code>. Cari tulisan berwarna merah (Traceback) untuk melihat penyebab pasti crash-nya.
+                    </p>
                   </div>
-                ) : ( // Jika hasil single email (gabungan)
+                ) : analysisResults.rows ? ( // ✅ Cek langsung key 'rows' untuk batch CSV
                   <div>
-                    {/* Tombol Download PDF jika tersedia */}
+                    <h4 className="font-medium mb-2 text-blue-400">CSV Batch Analysis Summary</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                      <div className="bg-gray-700 p-3 rounded"><p className="text-sm text-gray-400">Total Rows</p><p className="text-lg font-semibold">{analysisResults.total_rows}</p></div>
+                      <div className="bg-gray-700 p-3 rounded"><p className="text-sm text-gray-400">Phishing Detected</p><p className="text-lg font-semibold text-red-400">{analysisResults.phishing_count}</p></div>
+                      <div className="bg-gray-700 p-3 rounded"><p className="text-sm text-gray-400">Clean Emails</p><p className="text-lg font-semibold text-green-400">{analysisResults.clean_count}</p></div>
+                    </div>
                     {pdfDownloadUrl && (
                       <div className="mb-4">
-                        <a
-                          href={pdfDownloadUrl}
-                          download
-                          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg inline-flex items-center"
-                        >
-                          <Download className="w-4 h-4 mr-2" />
-                          Download PDF Report
+                        <a href={pdfDownloadUrl} download={`ePhish_Batch_Report_${emailFile?.name || 'analysis'}.pdf`} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg inline-flex items-center">
+                          <Download className="w-4 h-4 mr-2" /> Download PDF Report
                         </a>
                       </div>
                     )}
-                    {/* Render hasil phishing */}
+                    {renderBatchDetails(analysisResults.rows)}
+                  </div>
+                ) : (
+                  <div>
+                    {pdfDownloadUrl && (
+                      <div className="mb-4">
+                        <a href={pdfDownloadUrl} download={`ePhish_Single_Email_Report_${emailFile?.name || 'analysis'}.pdf`} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg inline-flex items-center">
+                          <Download className="w-4 h-4 mr-2" /> Download PDF Report
+                        </a>
+                      </div>
+                    )}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                       <div className="space-y-2">
-                        <p><strong>Phishing Verdict:</strong> <span className={
-                          analysisResults.phishing ? 'text-red-400' : 'text-green-400'
-                        }>
-                          {analysisResults.phishing ? 'PHISHING DETECTED' : 'CLEAN'}
-                        </span></p>
-                        <p><strong>Confidence (Phishing):</strong> {(analysisResults.confidence * 100).toFixed(2)}%</p>
-                        <p><strong>Severity:</strong> <span className={
-                          analysisResults.severity === 'CRITICAL' ? 'text-red-400' :
-                          analysisResults.severity === 'HIGH' ? 'text-orange-400' : 'text-green-400'
-                        }>{analysisResults.severity}</span></p>
-                        <p><strong>Phishing Score:</strong> {analysisResults.confidence?.toFixed(4)}</p>
+                        <p><strong>Phishing Verdict:</strong> <span className={analysisResults.phishing ? 'text-red-400' : 'text-green-400'}>{analysisResults.phishing ? 'PHISHING DETECTED' : 'CLEAN'}</span></p>
+                        <p><strong>Confidence:</strong> {(analysisResults.confidence * 100).toFixed(2)}%</p>
+                        <p><strong>Severity:</strong> <span className={analysisResults.severity === 'CRITICAL' ? 'text-red-400' : analysisResults.severity === 'HIGH' ? 'text-orange-400' : 'text-green-400'}>{analysisResults.severity}</span></p>
                       </div>
                       <div className="space-y-2">
-                        <p><strong>Suspicious URLs:</strong> {analysisResults.urls?.length || 0}</p>
-                        <p><strong>Social Engineering:</strong> {analysisResults.social_engineering?.join(', ') || 'None detected'}</p>
-                        <p><strong>NLP Label:</strong> {analysisResults.nlp_label}</p>
+                        <p><strong>Social Engineering:</strong> {analysisResults.social_engineering || 'None detected'}</p>
                       </div>
                     </div>
-                    {/* Render hasil malware jika ada */}
-                    {analysisResults.malware_analysis && (
-                      <div className="mt-4 pt-4 border-t border-gray-600">
-                        <h4 className="font-medium mb-2">Malware Analysis (Email Content)</h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <p><strong>Malware Status:</strong> <span className={
-                              analysisResults.malware_analysis.is_malware ? 'text-red-400' : 'text-green-400'
-                            }>
-                              {analysisResults.malware_analysis.is_malware ? 'MALWARE DETECTED' : 'CLEAN'}
-                            </span></p>
-                            <p><strong>Malware Family:</strong> {analysisResults.malware_analysis.malware_family || 'Unknown'}</p>
-                            <p><strong>Confidence (Malware):</strong> {(analysisResults.malware_analysis.malware_confidence * 100).toFixed(2)}%</p>
-                          </div>
-                          <div className="space-y-2">
-                            <p><strong>Entropy:</strong> {analysisResults.malware_analysis.entropy?.toFixed(4)}</p>
-                            <p><strong>YARA Matches:</strong> {analysisResults.malware_analysis.yara_matches?.length || 0}</p>
-                            <p><strong>Analysis Method:</strong> {analysisResults.malware_analysis.analysis_method}</p>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                    {/* Penjelasan */}
                     <div className="mt-4 p-4 bg-gray-700 rounded">
                       <h4 className="font-medium mb-1">Explanation</h4>
                       <p className="text-sm text-gray-300">{analysisResults.explanation}</p>
@@ -515,46 +447,25 @@ const App = () => {
                 <AlertTriangle className="w-5 h-5 mr-2 text-orange-400" />
                 Email Malware Analysis
               </h2>
-              
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium mb-2">Upload Email or Attachment</label>
                   <div className="border-2 border-dashed border-gray-600 rounded-lg p-6 text-center">
                     <Upload className="w-12 h-12 text-gray-400 mx-auto mb-2" />
-                    <input
-                      type="file"
-                      onChange={(e) => setEmailFile(e.target.files[0])} // Gunakan state yang sama
-                      className="hidden"
-                      id="malware-upload"
-                    />
+                    <input type="file" onChange={(e) => setEmailFile(e.target.files[0])} className="hidden" id="malware-upload" />
                     <label htmlFor="malware-upload" className="cursor-pointer">
-                      <span className="text-orange-400 hover:text-orange-300">
-                        Click to upload email (.eml/.msg) or attachment file
-                      </span>
+                      <span className="text-orange-400 hover:text-orange-300">Click to upload email (.eml/.msg) or attachment file</span>
                     </label>
-                    {emailFile && (
-                      <p className="text-sm text-gray-400 mt-2">{emailFile.name}</p>
-                    )}
+                    {emailFile && (<p className="text-sm text-gray-400 mt-2">{emailFile.name}</p>)}
                   </div>
                 </div>
-                
-                <button
-                  onClick={() => handleFileUpload('malware')}
-                  disabled={!emailFile || isLoading}
-                  className="bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 px-6 py-2 rounded-lg flex items-center"
-                >
-                  <Search className="w-4 h-4 mr-2" />
-                  Analyze Malware
+                <button onClick={() => handleFileUpload('malware')} disabled={isLoading || !emailFile} className="bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 px-6 py-2 rounded-lg flex items-center">
+                  <Search className="w-4 h-4 mr-2" /> Analyze Malware
                 </button>
-
-                {/* Progress Bar and Timer */}
                 {isLoading && (
                   <div className="space-y-2">
                     <div className="w-full bg-gray-700 rounded-full h-2.5">
-                      <div 
-                        className="bg-orange-600 h-2.5 rounded-full transition-all duration-300 ease-out" 
-                        style={{ width: `${progress}%` }}
-                      ></div>
+                      <div className="bg-orange-600 h-2.5 rounded-full transition-all duration-300 ease-out" style={{ width: `${progress}%` }}></div>
                     </div>
                     <div className="flex justify-between text-sm text-gray-400">
                       <span>Progress: {progress}%</span>
@@ -572,26 +483,16 @@ const App = () => {
                   <div className="text-red-400">Error: {analysisResults.error}</div>
                 ) : (
                   <div>
-                    {/* Tombol Download PDF jika tersedia */}
                     {pdfDownloadUrl && (
                       <div className="mb-4">
-                        <a
-                          href={pdfDownloadUrl}
-                          download
-                          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg inline-flex items-center"
-                        >
-                          <Download className="w-4 h-4 mr-2" />
-                          Download PDF Report
+                        <a href={pdfDownloadUrl} download={`ePhish_Malware_Report_${emailFile?.name || 'analysis'}.pdf`} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg inline-flex items-center">
+                          <Download className="w-4 h-4 mr-2" /> Download PDF Report
                         </a>
                       </div>
                     )}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <p><strong>Malware Status:</strong> <span className={
-                          analysisResults.is_malware ? 'text-red-400' : 'text-green-400'
-                        }>
-                          {analysisResults.is_malware ? 'MALWARE DETECTED' : 'CLEAN'}
-                        </span></p>
+                        <p><strong>Malware Status:</strong> <span className={analysisResults.is_malware ? 'text-red-400' : 'text-green-400'}>{analysisResults.is_malware ? 'MALWARE DETECTED' : 'CLEAN'}</span></p>
                         <p><strong>Malware Family:</strong> {analysisResults.malware_family || 'Unknown'}</p>
                         <p><strong>Confidence:</strong> {(analysisResults.malware_confidence * 100).toFixed(2)}%</p>
                         <p><strong>Analysis Method:</strong> {analysisResults.analysis_method}</p>
@@ -603,7 +504,6 @@ const App = () => {
                         <p><strong>Suspicious Patterns:</strong> {analysisResults.suspicious_patterns_found?.length || 0}</p>
                       </div>
                     </div>
-                    {/* Penjelasan */}
                     <div className="mt-4 p-4 bg-gray-700 rounded">
                       <h4 className="font-medium mb-1">Explanation</h4>
                       <p className="text-sm text-gray-300">{analysisResults.explanation}</p>
@@ -615,6 +515,66 @@ const App = () => {
           </div>
         )}
 
+        <div className="mt-6 bg-gray-800 p-6 rounded-lg border border-gray-700">
+          <h3 className="text-lg font-semibold mb-4 flex items-center">
+            <MessageCircle className="w-5 h-5 mr-2 text-purple-400" />
+            AI Forensic Assistant
+          </h3>
+          <div className="space-y-4">
+            <div className="bg-gray-700 p-4 rounded max-h-64 overflow-y-auto">
+              {chatMessages.map((message, index) => (
+                <div key={index} className={`mb-3 ${message.role === 'user' ? 'text-right' : ''}`}>
+                  <div className={`inline-block p-3 rounded-lg max-w-xs ${message.role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-600 text-white'}`}>
+                    {message.content}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex space-x-2">
+              <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Ask about analysis results, forensic procedures, or incident response..." className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white" onKeyPress={(e) => e.key === 'Enter' && handleChatSubmit()} />
+              <button onClick={handleChatSubmit} className="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg flex items-center">
+                <Send className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6 bg-gray-800 p-6 rounded-lg border border-gray-700">
+          <h3 className="text-lg font-semibold mb-4 flex items-center">
+            <Activity className="w-5 h-5 mr-2 text-green-400" />
+            Forensic Activity Logs
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-600">
+              <thead>
+                <tr>
+                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Timestamp</th>
+                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Action</th>
+                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Result</th>
+                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Severity</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-600">
+                {[...forensicLogs].reverse().map((log, index) => (
+                  <tr key={log.id || index}>
+                    <td className="px-4 py-2 text-sm text-gray-300">{new Date(log.timestamp).toLocaleString()}</td>
+                    <td className="px-4 py-2 text-sm text-gray-300">{log.action}</td>
+                    <td className="px-4 py-2 text-sm">
+                      <span className={`px-2 py-1 rounded text-xs ${log.result.toLowerCase().includes('detect') || log.result.toLowerCase().includes('quarantin') ? 'bg-red-900 text-red-200' : log.result.toLowerCase().includes('approv') || log.result.toLowerCase().includes('clean') ? 'bg-green-900 text-green-200' : 'bg-gray-900 text-gray-200'}`}>
+                        {log.result}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-sm">
+                      <span className={`px-2 py-1 rounded text-xs ${log.severity === 'critical' ? 'bg-red-900 text-red-200' : log.severity === 'high' ? 'bg-orange-900 text-orange-200' : log.severity === 'medium' ? 'bg-yellow-900 text-yellow-200' : 'bg-green-900 text-green-200'}`}>
+                        {log.severity.toUpperCase()}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </main>
     </div>
   );

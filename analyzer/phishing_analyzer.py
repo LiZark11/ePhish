@@ -1,249 +1,178 @@
 # analyzer/phishing_analyzer.py
-import pandas as pd
-import numpy as np
 import re
-import hashlib
-from datetime import datetime, timezone
-from transformers import pipeline
-import logging
+import tldextract
+import pandas as pd
 import io
+import logging
+from transformers import pipeline
+from datetime import datetime, timezone
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Inisialisasi model hanya sekali
-phishing_model = None
+# =========================================================
+# LOAD NLP MODEL (DISTILBERT SST-2)
+# =========================================================
+logger.info("Loading NLP Model (DistilBERT)...")
+phishing_model = pipeline(
+    "text-classification",
+    model="distilbert-base-uncased-finetuned-sst-2-english",
+    truncation=True
+)
+logger.info("Model Loaded Successfully")
 
-def initialize_model():
-    global phishing_model
-    if phishing_model is None:
-        logger.info("Initializing DistilBERT model...")
-        try:
-            phishing_model = pipeline(
-                "text-classification",
-                model="distilbert-base-uncased-finetuned-sst-2-english",
-                return_all_scores=False,
-                truncation=True,
-                max_length=512
-            )
-            logger.info("Model initialized successfully.")
-        except Exception as e:
-            logger.error(f"Failed to initialize model: {e}")
-            phishing_model = "ERROR"
-
+# =========================================================
+# HELPER FUNCTIONS
+# =========================================================
 def phishing_nlp(text):
-    initialize_model()
-    if phishing_model == "ERROR":
-        logger.warning("Using rule-based fallback due to model error.")
-        return rule_based_phishing_score(text)
-
-    try:
-        if not text or not isinstance(text, str):
-            logger.warning("Empty or non-string text provided to phishing_nlp.")
-            return {
-                "phishing_score": 0.0,
-                "is_phishing": False,
-                "label": "NO_CONTENT"
-            }
-
-        clean_text = text.strip()[:512]
-        if not clean_text:
-            logger.warning("Text became empty after cleaning.")
-            return {
-                "phishing_score": 0.0,
-                "is_phishing": False,
-                "label": "EMPTY_AFTER_CLEAN"
-            }
-
-        result = phishing_model(clean_text)[0]
-        score = result["score"]
-        label = result["label"]
-        is_phishing = True if label == "NEGATIVE" and score > 0.85 else False
-
-        return {
-            "phishing_score": float(score),
-            "is_phishing": is_phishing,
-            "label": label
-        }
-    except Exception as e:
-        logger.error(f"Error dalam phishing_nlp: {e}")
-        return rule_based_phishing_score(text)
-
-def rule_based_phishing_score(text):
-    if not text:
-        return {
-            "phishing_score": 0.0,
-            "is_phishing": False,
-            "label": "RULE_BASED_EMPTY"
-        }
-
-    score = 0.0
-    found_keywords = []
-    keywords = [
-        ("urgent", 0.1), ("verify", 0.1), ("suspend", 0.2),
-        ("click here", 0.15), ("password", 0.1), ("act now", 0.1),
-        ("limited time", 0.1), ("account", 0.05), ("security", 0.05),
-        ("locked", 0.1)
-    ]
-
-    text_lower = text.lower()
-    for keyword, weight in keywords:
-        if keyword in text_lower:
-            score += weight
-            found_keywords.append(keyword)
-
-    score = min(score, 1.0)
-    is_phishing = score > 0.5
-    label = f"RULE_BASED_{len(found_keywords)}_MATCHES"
-
-    return {
-        "phishing_score": score,
-        "is_phishing": is_phishing,
-        "label": label,
-        "matched_keywords": found_keywords
-    }
+    """Analyze text using DistilBERT model."""
+    # Fallback jika teks kosong agar tidak error
+    if not text or not text.strip():
+        return 0.5, "POSITIVE" 
+    result = phishing_model(text[:512])[0]
+    return result["score"], result["label"]
 
 def extract_urls(text):
-    if not text:
-        return []
-    pattern = r'https?://(?:[-\w.])+(?:[:\d]+)?(?:/(?:[\w/_.])*(?:\?(?:[\w&=%.])*)?(?:#(?:\w*))?)?'
-    urls = re.findall(pattern, text)
-    return [url for url in urls if len(url) < 500]
+    """Extract up to 3 URLs, truncated to 80 chars each."""
+    if not text: return []
+    urls = re.findall(r'https?://[^\s]+', text)
+    return [url[:80] for url in urls[:3]]
+
+def extract_domains(urls):
+    """Extract up to 3 unique domains from URLs using tldextract."""
+    domains = []
+    for url in urls[:3]:
+        try:
+            extracted = tldextract.extract(url)
+            domain = f"{extracted.domain}.{extracted.suffix}"
+            if domain and domain not in domains:
+                domains.append(domain)
+        except Exception:
+            continue
+    return domains[:3]
 
 def social_engineering(text):
-    if not text:
-        return []
+    """Detect up to 3 social engineering keywords."""
+    if not text: return []
     keywords = [
-        "urgent", "verify", "suspend", "immediately",
-        "click here", "confirm", "password", "act now",
-        "limited time", "account", "security", "locked",
-        "dear customer", "your account", "click immediately"
+        "urgent", "verify", "suspend", "immediately", "click here",
+        "confirm", "password", "bank", "login", "security"
     ]
-    return [k for k in keywords if k in text.lower()]
+    text_lower = text.lower()
+    return [kw for kw in keywords if kw in text_lower][:3]
 
-def severity(confidence, is_phishing):
-    if is_phishing and confidence > 0.9:
+def severity_classification(is_phishing, confidence):
+    """Classify severity based on phishing status and confidence score."""
+    if is_phishing and confidence >= 0.90:
         return "CRITICAL"
     elif is_phishing:
         return "HIGH"
-    else:
-        return "LOW"
+    return "LOW"
 
-def ai_explain(phishing_result, urls, social_eng_terms):
-    is_phishing = phishing_result["is_phishing"]
-    confidence = phishing_result["phishing_score"]
-    label = phishing_result["label"]
-
+def ai_explanation(is_phishing):
+    """Generate a human-readable explanation for the analysis result."""
     if is_phishing:
-        explanation_parts = [
-            f"Email diklasifikasikan sebagai phishing karena "
-            f"mengandung pola social engineering ({', '.join(social_eng_terms) if social_eng_terms else 'tidak ada'}), "
-            f"dan konteks analisis NLP menunjukkan indikator phishing (score: {confidence:.2f}, label: {label})."
-        ]
-        if urls:
-            explanation_parts.append(f" Terdapat {len(urls)} URL yang ditemukan.")
-        return " ".join(explanation_parts)
-    else:
-        explanation_parts = [
-            "Email tidak menunjukkan indikator phishing signifikan berdasarkan analisis NLP (score: {:.2f}, label: {})".format(confidence, label)
-        ]
-        if social_eng_terms:
-            explanation_parts.append(f", meskipun terdapat beberapa istilah social engineering: {', '.join(social_eng_terms)}.")
-        else:
-            explanation_parts.append(".")
-        return "".join(explanation_parts)
+        return "Email diklasifikasikan sebagai phishing karena mengandung pola social engineering, urgensi tinggi, dan konteks manipulatif."
+    return "Email tidak menunjukkan indikator phishing signifikan."
 
-def analyze_single_email(email_text, email_id=None):
-    nlp_result = phishing_nlp(email_text)
-    urls = extract_urls(email_text)
-    social_eng_terms = social_engineering(email_text)
-    current_severity = severity(nlp_result["phishing_score"], nlp_result["is_phishing"])
-    explanation = ai_explain(nlp_result, urls, social_eng_terms)
-
-    result = {
-        "email_id": email_id or "unknown",
-        "phishing": nlp_result["is_phishing"],
-        "confidence": nlp_result["phishing_score"],
-        "urls": urls,
-        "social_engineering": social_eng_terms,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "severity": current_severity,
-        "explanation": explanation,
-        "nlp_label": nlp_result["label"]
+# =========================================================
+# SINGLE EMAIL ANALYSIS
+# =========================================================
+def analyze_single_email(text, email_id):
+    """Analyze a single email text and return a detailed dictionary."""
+    score, label = phishing_nlp(text)
+    urls = extract_urls(text)
+    domains = extract_domains(urls)
+    se = social_engineering(text)
+    
+    # LOGIKA KEPUTUSAN (HYBRID OR)
+    sentiment_risk = (label == "NEGATIVE" and score >= 0.65)
+    is_phishing = (len(urls) >= 1 or len(se) >= 1 or sentiment_risk)
+    
+    return {
+        "email_id": email_id,
+        "phishing": is_phishing,
+        "confidence": round(score, 4),
+        "social_engineering": ", ".join(se) if se else "-",
+        "domains": ", ".join(domains) if domains else "-",
+        "urls": "\n".join(urls) if urls else "-",
+        "sentiment": label,
+        "severity": severity_classification(is_phishing, score),
+        "explanation": ai_explanation(is_phishing),
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
-    return result
-
-# --- Fungsi untuk Analisis Batch (CSV) ---
+# =========================================================
+# BATCH CSV ANALYSIS (OPTIMIZED WITH BATCH INFERENCE)
+# =========================================================
 def analyze_csv_batch(csv_content):
     """
-    Analisis batch email dari konten CSV.
-    Menerima string CSV, kembalikan list hasil analisis.
+    Analyze a batch of emails from CSV content.
+    Uses optimized batch inference for the NLP model to process thousands of rows quickly.
+    Returns a flat dictionary structure expected by the backend.
     """
-    try:
-        df = pd.read_csv(io.StringIO(csv_content))
-
-        text_column = None
-        if 'subject' in df.columns and 'body' in df.columns:
-            df["email_text"] = df.apply(lambda row: str(row.get("subject", "")) + " " + str(row.get("body", "")), axis=1)
-            text_column = "email_text"
-        elif 'content' in df.columns:
-            text_column = "content"
-        elif 'text' in df.columns:
-            text_column = "text"
-        elif 'message' in df.columns:
-            text_column = "message"
-        else:
-            first_col = df.columns[0]
-            df["email_text"] = df[first_col].astype(str)
-            text_column = "email_text"
-
-        if text_column not in df.columns:
-            raise ValueError(f"Could not determine text column from CSV. Columns found: {list(df.columns)}")
-
-        results = []
-        total_rows = len(df)
-        logger.info(f"Starting batch analysis for {total_rows} rows.")
-
-        # Inisialisasi model di awal batch untuk menghindari inisialisasi ulang
-        initialize_model()
-
-        # Log setiap 1% atau setiap N baris (gunakan yang lebih besar)
-        progress_interval = max(1, total_rows // 100) # Log setiap 1% atau minimal 1 baris
-        last_logged_percentage = -1
-
-        for index, row in df.iterrows():
-            email_text = str(row.get(text_column, ""))
-            email_id = str(row.get("email_id", row.get("id", f"csv_row_{index}")))
-
-            analysis_result = analyze_single_email(email_text, email_id)
-            results.append(analysis_result)
-
-            # Log progress
-            current_percentage = (index + 1) * 100 // total_rows
-            if current_percentage > last_logged_percentage and current_percentage % 10 == 0: # Log setiap 10%
-                 logger.info(f"Progress: {current_percentage}% ({index + 1}/{total_rows})")
-                 last_logged_percentage = current_percentage
-
-
-        phishing_count = sum(1 for r in results if r["phishing"])
-        clean_count = total_rows - phishing_count
-
-        batch_result = {
-            "csv_analysis": {
-                "total_rows": total_rows,
-                "phishing_count": phishing_count,
-                "clean_count": clean_count,
-                "rows": results
-            },
-            "verdict": "completed",
+    csv_df = pd.read_csv(io.StringIO(csv_content))
+    
+    # Detect text column (fallback ke kolom pertama jika tidak ada yang cocok)
+    possible_columns = ["text", "email", "body", "message", "content"]
+    selected_column = next((col for col in possible_columns if col in csv_df.columns), csv_df.columns[0])
+        
+    # PERBAIKAN: Ekstrak semua teks, tangani nilai NaN/None dengan aman agar tidak jadi string "nan"
+    texts = [str(row[selected_column]) if pd.notna(row[selected_column]) else "" for _, row in csv_df.iterrows()]
+    truncated_texts = [t[:512] for t in texts]
+    
+    logger.info(f"Running optimized batch NLP inference on {len(truncated_texts)} texts...")
+    
+    # BATCH INFERENCE: Proses semua teks sekaligus dengan batch_size untuk kecepatan maksimal
+    nlp_results = phishing_model(truncated_texts, batch_size=32, truncation=True)
+    logger.info("Batch NLP inference completed successfully.")
+    
+    results = []
+    phishing_count = 0
+    clean_count = 0
+    
+    for idx, row in csv_df.iterrows():
+        body = texts[idx]
+        email_id = idx + 1
+        
+        # Ambil hasil NLP untuk baris ini dari output batch
+        score = nlp_results[idx]['score']
+        label = nlp_results[idx]['label']
+        
+        urls = extract_urls(body)
+        domains = extract_domains(urls)
+        se = social_engineering(body)
+        
+        # LOGIKA KEPUTUSAN (HYBRID OR)
+        sentiment_risk = (label == "NEGATIVE" and score >= 0.65)
+        is_phishing = (len(urls) >= 1 or len(se) >= 1 or sentiment_risk)
+        
+        severity = severity_classification(is_phishing, score)
+        explanation = ai_explanation(is_phishing)
+        
+        analysis = {
+            "email_id": email_id,
+            "phishing": is_phishing,
+            "confidence": round(score, 4),
+            "social_engineering": ", ".join(se) if se else "-",
+            "domains": ", ".join(domains) if domains else "-",
+            "urls": "\n".join(urls) if urls else "-",
+            "sentiment": label,
+            "severity": severity,
+            "explanation": explanation,
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
-
-        logger.info(f"Batch analysis completed. {phishing_count} phishing, {clean_count} clean.")
-        return batch_result
-
-    except Exception as e:
-        logger.error(f"Error dalam analyze_csv_batch: {e}")
-        return {"error": str(e), "verdict": "failed", "timestamp": datetime.now(timezone.utc).isoformat()}
+        
+        results.append(analysis)
+        if is_phishing:
+            phishing_count += 1
+        else:
+            clean_count += 1
+            
+    # RETURN STRUKTUR FLAT (SUDAH SESUAI 100% DENGAN BACKEND BARU)
+    return {
+        "total_rows": len(results),
+        "phishing_count": phishing_count,
+        "clean_count": clean_count,
+        "rows": results,
+        "verdict": "completed"
+    }

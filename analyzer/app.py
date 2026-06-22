@@ -15,6 +15,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib import colors
+import pandas as pd # Import pandas untuk manipulasi data jika perlu
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -27,12 +28,16 @@ def generate_pdf_report(combined_results, filename_prefix="ePhish_Forensic_Repor
     """
     Generate a PDF report from combined phishing/malware analysis results.
     Includes Top-N URLs section.
+    Assumes combined_results has a specific structure, e.g., from analyze_combined or analyze_csv_batch.
     """
     # Create a filename with timestamp
     timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
     filename = f"{filename_prefix}_{timestamp}.pdf"
     # Create a file path in the shared reports directory
     temp_pdf_path = os.path.join("/app/reports", filename)
+
+    # Ensure the reports directory exists
+    os.makedirs("/app/reports", exist_ok=True)
 
     doc = SimpleDocTemplate(temp_pdf_path, pagesize=A4)
     styles = getSampleStyleSheet()
@@ -54,7 +59,7 @@ def generate_pdf_report(combined_results, filename_prefix="ePhish_Forensic_Repor
     normal_style = styles['Normal']
 
     # Title
-    title = Paragraph("ePhish - Digital Forensic Analysis Report", title_style)
+    title = Paragraph("ePhish - Digital Forensic Email Analysis Report", title_style)
     elements.append(title)
     elements.append(Spacer(1, 20))
 
@@ -71,7 +76,7 @@ def generate_pdf_report(combined_results, filename_prefix="ePhish_Forensic_Repor
         summary_data = combined_results['csv_analysis']
         total_emails = summary_data.get('total_rows', 0)
         total_phishing = summary_data.get('phishing_count', 0)
-        # For malware, we might need to iterate through rows if malware was checked per email
+        # For malware, iterate through rows if malware was checked per email
         for row in summary_data.get('rows', []):
             if row.get('malware_analysis', {}).get('is_malware'):
                 total_malware += 1
@@ -124,8 +129,33 @@ def generate_pdf_report(combined_results, filename_prefix="ePhish_Forensic_Repor
         elements.append(Paragraph("No URLs found in the analyzed content.", normal_style))
     elements.append(Spacer(1, 20))
 
-    # Detailed Results Section (only if single email or small batch)
-    if 'csv_analysis' not in combined_results:
+    # Detailed Results Section (only if single email or small batch <= 50)
+    if 'csv_analysis' in combined_results:
+        batch_results = combined_results['csv_analysis']
+        if batch_results.get('total_rows', 0) <= 50: # Only show detailed rows if batch is small (changed from 20 to 50)
+            elements.append(Paragraph("Detailed Batch Results (First 50)", subtitle_style))
+            rows = batch_results.get('rows', [])
+            for i, row in enumerate(rows[:50]): # Show first 50 (changed from 20)
+                elements.append(Paragraph(f"--- Email {i+1}: {row.get('email_id', 'unknown')} ---", styles['Normal']))
+                detail_parts = [
+                    f"<b>Phishing:</b> {row.get('phishing', False)}",
+                    f"<b>Confidence:</b> {row.get('confidence', 0):.4f}",
+                    f"<b>Severity:</b> {row.get('severity', 'N/A')}",
+                    f"<b>Social Eng.:</b> {', '.join(row.get('social_engineering', []))}",
+                ]
+                if row.get('malware_analysis'):
+                    ma = row['malware_analysis']
+                    detail_parts.extend([
+                        f"<b>Malware:</b> {ma.get('is_malware', False)}",
+                        f"<b>Malware Conf.:</b> {ma.get('malware_confidence', 0):.4f}",
+                    ])
+                detail_text = "<br/>".join(detail_parts)
+                elements.append(Paragraph(detail_text, normal_style))
+                elements.append(Spacer(1, 10))
+        else:
+            elements.append(Paragraph(f"Batch analysis completed for {total_emails} emails. Detailed results for individual emails are not displayed in this summary report due to length. Please check the database or analyzer logs for full details.", normal_style))
+
+    elif 'phishing' in combined_results: # Single email analysis
         # Single Email Analysis
         elements.append(Paragraph("Detailed Analysis Result", subtitle_style))
         detail_parts = [
@@ -145,27 +175,6 @@ def generate_pdf_report(combined_results, filename_prefix="ePhish_Forensic_Repor
             ])
         detail_text = "<br/>".join(detail_parts)
         elements.append(Paragraph(detail_text, normal_style))
-
-    elif combined_results['csv_analysis'].get('total_rows', 0) <= 20: # Only show detailed rows if batch is small
-        elements.append(Paragraph("Detailed Batch Results (First 20)", subtitle_style))
-        rows = combined_results['csv_analysis'].get('rows', [])
-        for i, row in enumerate(rows[:20]): # Show first 20
-            elements.append(Paragraph(f"--- Email {i+1}: {row.get('email_id', 'unknown')} ---", styles['Heading3']))
-            detail_parts = [
-                f"<b>Phishing:</b> {row.get('phishing', False)}",
-                f"<b>Confidence:</b> {row.get('confidence', 0):.4f}",
-                f"<b>Severity:</b> {row.get('severity', 'N/A')}",
-                f"<b>Social Eng.:</b> {', '.join(row.get('social_engineering', []))}",
-            ]
-            if row.get('malware_analysis'):
-                ma = row['malware_analysis']
-                detail_parts.extend([
-                    f"<b>Malware:</b> {ma.get('is_malware', False)}",
-                    f"<b>Malware Conf.:</b> {ma.get('malware_confidence', 0):.4f}",
-                ])
-            detail_text = "<br/>".join(detail_parts)
-            elements.append(Paragraph(detail_text, normal_style))
-            elements.append(Spacer(1, 10))
 
     doc.build(elements)
     # Return just the filename, not the full path
@@ -203,22 +212,20 @@ def analyze_phishing():
             logger.info(f"Processing file: {filename}")
 
             if filename.endswith('.csv'):
-                # Analisis Batch CSV
+                # Batch CSV Analysis
                 content = file.read().decode('utf-8')
                 batch_result = analyze_csv_batch(content)
 
-                # Proses batch untuk tambahkan malware analysis ke setiap row (opsional, bisa di-skip untuk performansi)
-                # Kita hanya buat laporan PDF untuk batch
+                # Generate PDF for batch analysis
                 pdf_filename = generate_pdf_report(batch_result, f"ePhish_Batch_Report_{filename.replace('.csv', '')}")
-                # Store the relative path from the shared directory perspective for the backend
-                batch_result['report_pdf_path'] = pdf_filename # Store only the filename
+                batch_result['report_pdf_path'] = pdf_filename # Add PDF path to result
 
                 return jsonify(batch_result)
 
             elif filename.endswith(('.eml', '.msg')):
-                # Analisis Email Tunggal dari File
+                # Single Email Analysis from File
                 content = file.read().decode('utf-8')
-                # Parse email untuk mendapatkan subject, body
+                # Parse email to get subject, body
                 try:
                     msg = email.message_from_string(content)
                     subject = msg.get('Subject', '')
@@ -235,8 +242,7 @@ def analyze_phishing():
                     
                     # Generate PDF for single email
                     pdf_filename = generate_pdf_report(result, f"ePhish_Analysis_Report_{filename.replace('.eml', '').replace('.msg', '')}")
-                    # Store the relative path from the shared directory perspective for the backend
-                    result['report_pdf_path'] = pdf_filename # Store only the filename
+                    result['report_pdf_path'] = pdf_filename # Add PDF path to result
                     
                     logger.info(f"Combined analysis completed: phishing={result.get('phishing')}, malware={result.get('malware_analysis', {}).get('is_malware')}")
                     return jsonify(result)
@@ -253,8 +259,7 @@ def analyze_phishing():
             
             # Generate PDF for JSON input
             pdf_filename = generate_pdf_report(result, f"ePhish_JSON_Analysis_Report")
-            # Store the relative path from the shared directory perspective for the backend
-            result['report_pdf_path'] = pdf_filename # Store only the filename
+            result['report_pdf_path'] = pdf_filename # Add PDF path to result
             
             logger.info(f"Combined JSON analysis completed: phishing={result.get('phishing')}, malware={result.get('malware_analysis', {}).get('is_malware')}")
             return jsonify(result)
@@ -263,7 +268,7 @@ def analyze_phishing():
         logger.error(f"Error in analyze_phishing: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/analyze/malware', methods=['POST']) # Tetap ada untuk kompatibilitas jika diperlukan
+@app.route('/analyze/malware', methods=['POST']) # Keep for compatibility if needed
 def analyze_malware_endpoint():
     """Endpoint for standalone malware analysis (e.g., attachment file)."""
     try:
@@ -274,22 +279,22 @@ def analyze_malware_endpoint():
             filename = file.filename.lower()
             logger.info(f"Processing malware file: {filename}")
 
-            # Simpan file sementara
+            # Save file temporarily
             temp_path = os.path.join(tempfile.gettempdir(), file.filename)
             file.save(temp_path)
 
-            # Analisis file attachment langsung
+            # Analyze attachment file directly
             result = analyze_attachment_file(temp_path)
 
-            # Hapus file sementara
+            # Remove temp file
             try:
                 os.remove(temp_path)
             except:
-                pass # Jika gagal hapus, lanjutkan saja
+                pass # If removal fails, continue anyway
             return jsonify(result)
 
         else:
-            # JSON payload untuk konten email mentah
+            # JSON payload for raw email content
             data = request.get_json()
             email_content = data.get('email_content', '')
             attachments_info = data.get('attachments_info', [])
